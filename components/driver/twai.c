@@ -150,13 +150,27 @@ static inline void twai_handle_rx_buffer_frames(BaseType_t *task_woken, int *ale
         twai_hal_frame_t frame;
         if (twai_hal_read_rx_buffer_and_clear(&twai_context, &frame)) {
             //Valid frame copied from RX buffer
-            if (xQueueSendFromISR(p_twai_obj->rx_queue, &frame, task_woken) == pdTRUE) {
-                p_twai_obj->rx_msg_count++;
-                twai_alert_handler(TWAI_ALERT_RX_DATA, alert_req);
-            } else {
-                p_twai_obj->rx_missed_count++;
-                twai_alert_handler(TWAI_ALERT_RX_QUEUE_FULL, alert_req);
-            }
+
+	        // If maptun callback is set then use that instead of
+	        // normal operation placing the received frame in a receive
+	        // queue.
+	        if (maptun_rx_cb)
+	        {   
+		        //TWAI_EXIT_CRITICAL();		        
+		        maptun_twai_notify_rx(&frame);
+		        //TWAI_ENTER_CRITICAL();
+	        }
+	        else
+	        {
+		        if (xQueueSendFromISR(p_twai_obj->rx_queue, &frame, task_woken) == pdTRUE) {
+			        p_twai_obj->rx_msg_count++;
+			        twai_alert_handler(TWAI_ALERT_RX_DATA, alert_req);
+		        }
+		        else {
+			        p_twai_obj->rx_missed_count++;
+			        twai_alert_handler(TWAI_ALERT_RX_QUEUE_FULL, alert_req);
+		        }		        
+	        }
         } else {
             overrun = true;
             break;
@@ -711,4 +725,50 @@ esp_err_t twai_clear_receive_queue(void)
     TWAI_EXIT_CRITICAL();
 
     return ESP_OK;
+}
+
+/* -------------------- Maptun tweaks ----------------------------------------*/
+
+void(*maptun_rx_cb)(twai_message_t*) = NULL;
+
+void maptun_twai_set_rxcallback(void (*cb)(twai_message_t*))
+{	
+	maptun_rx_cb = cb;	
+}
+
+void maptun_twai_notify_rx(twai_hal_frame_t* rx_frame)
+{
+	//Decode frame and notify
+	twai_message_t message;
+	twai_hal_parse_frame(rx_frame, &message);
+
+	if (maptun_rx_cb != NULL)
+	    maptun_rx_cb(&message);
+}
+
+esp_err_t maptun_twai_transmit(twai_message_t* message)
+{
+	//Check arguments
+	TWAI_CHECK(p_twai_obj != NULL, ESP_ERR_INVALID_STATE);
+	TWAI_CHECK(message != NULL, ESP_ERR_INVALID_ARG);
+	TWAI_CHECK((message->data_length_code <= TWAI_FRAME_MAX_DLC) || message->dlc_non_comp, ESP_ERR_INVALID_ARG);
+ 
+	//TWAI_ENTER_CRITICAL();
+	//Check State
+	TWAI_CHECK_FROM_CRIT(!(p_twai_obj->mode == TWAI_MODE_LISTEN_ONLY), ESP_ERR_NOT_SUPPORTED);
+	TWAI_CHECK_FROM_CRIT(p_twai_obj->state == TWAI_STATE_RUNNING, ESP_ERR_INVALID_STATE);
+	//Format frame
+	esp_err_t ret = ESP_FAIL;
+	twai_hal_frame_t tx_frame;
+	twai_hal_format_frame(message, &tx_frame);
+ 
+	//Check if frame can be sent immediately
+	if (p_twai_obj->tx_msg_count == 0) {
+		//No other frames waiting to transmit.
+		twai_hal_set_tx_buffer_and_transmit(&twai_context, &tx_frame);
+		p_twai_obj->tx_msg_count++;
+		ret = ESP_OK;
+	}
+	//TWAI_EXIT_CRITICAL();
+	return ret;
 }

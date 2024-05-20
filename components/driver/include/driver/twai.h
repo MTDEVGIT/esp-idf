@@ -338,6 +338,37 @@ esp_err_t twai_clear_transmit_queue(void);
  */
 esp_err_t twai_clear_receive_queue(void);
 
+/* -------------------- BEGIN Maptun tweaks ----------------------------------------*/
+
+/**
+ * @brief   Set receive callback
+ *
+ * This function sets a callback for all received frames instead of normal
+ * message reception. Setting NULL restores normal operation.
+ *
+ * @param[in]   cb    Callback function
+ *
+ */
+void maptun_twai_set_rxcallback(void(*cb)(twai_message_t*));
+
+/**
+ * @brief   Transmit a TWAI message
+ *
+ * This function immediately sends a CAN message if no other message is pending.
+ *
+ * @param[in]   message         Message to transmit
+ *
+ * @return
+ *      - ESP_OK: Transmission successfully queued/initiated
+ *      - ESP_ERR_INVALID_ARG: Arguments are invalid
+ *      - ESP_FAIL: TX queue is disabled and another message is currently transmitting
+ *      - ESP_ERR_INVALID_STATE: TWAI driver is not in running state, or is not installed
+ *      - ESP_ERR_NOT_SUPPORTED: Listen Only Mode does not support transmissions
+ */
+esp_err_t maptun_twai_transmit(twai_message_t* message);
+
+/* -------------------- END Maptun tweaks ----------------------------------------*/
+
 #ifdef __cplusplus
 }
 #endif
